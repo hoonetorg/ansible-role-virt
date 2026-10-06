@@ -1,0 +1,4 @@
+---
+# rendered network XML (source for virsh net-define; a change triggers redefine)
+virt_network_dir: /etc/libvirt/ansible-networks
+virt_virsh: [virsh, --connect, "qemu:///system"]

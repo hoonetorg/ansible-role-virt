@@ -1,0 +1,11 @@
+galaxy_info:
+  author: hoonetorg
+  description: KVM/libvirt host with virt-manager (SPICE) and libvirt networks from the inventory
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: opensuse
+      versions: [all]
+  galaxy_tags: [kvm, libvirt, virtualization, qemu]
+
+dependencies: []

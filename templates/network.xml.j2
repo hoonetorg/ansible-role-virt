@@ -1,0 +1,44 @@
+<!-- {{ ansible_managed }} -->
+<!-- libvirt network {{ virt_net.name }} (ansible-role-virt, virt.networks[]); applied with virsh net-define -->
+{# DNS records: every static lease (hosts[]) plus dns_hosts[], one <host> per IP #}
+{% set dns = {} %}
+{% for h in virt_net.hosts %}
+{%   set _ = dns.update({h.ip: dns.get(h.ip, []) + [h.name]}) %}
+{% endfor %}
+{% for h in virt_net.dns_hosts %}
+{%   set _ = dns.update({h.ip: dns.get(h.ip, []) + h.names}) %}
+{% endfor %}
+<network>
+  <name>{{ virt_net.name }}</name>
+  <uuid>{{ virt_net_uuid_final }}</uuid>
+{% if virt_net.forward != 'none' %}
+  <forward mode='{{ virt_net.forward }}'/>
+{% endif %}
+  <bridge name='{{ virt_net.bridge }}' stp='on' delay='0'/>
+{% if virt_net.domain | length > 0 %}
+  <domain name='{{ virt_net.domain }}' localOnly='yes'/>
+{% endif %}
+{% if dns | length > 0 %}
+  <dns>
+{%   for ip, names in dns.items() %}
+    <host ip='{{ ip }}'>
+{%     for n in names | unique %}
+      <hostname>{{ n }}</hostname>
+{%     endfor %}
+    </host>
+{%   endfor %}
+  </dns>
+{% endif %}
+  <ip address='{{ virt_net.address }}' prefix='{{ virt_net.prefix }}'>
+{% if virt_net.dhcp_range | length > 0 or virt_net.hosts | length > 0 %}
+    <dhcp>
+{%   if virt_net.dhcp_range | length > 0 %}
+      <range start='{{ virt_net.dhcp_range[0] }}' end='{{ virt_net.dhcp_range[1] }}'/>
+{%   endif %}
+{%   for h in virt_net.hosts %}
+      <host mac='{{ h.mac | lower }}' name='{{ h.name }}' ip='{{ h.ip }}'/>
+{%   endfor %}
+    </dhcp>
+{% endif %}
+  </ip>
+</network>

@@ -1,0 +1,36 @@
+---
+# Merged (recursively) with the inventory variable `virt` into `virt_final`.
+virt_defaults:
+  # install and configure the KVM host (false: the role does nothing)
+  install: false
+
+  # zypper patterns: kvm_server (libvirt daemons, qemu, default network), kvm_tools (virt-manager,
+  # virt-install, libvirt-client; recommends virt-viewer, virt-v2v)
+  patterns: [kvm_server, kvm_tools]
+  # SPICE console in virt-manager (spice-gtk + typelibs), qemu SPICE modules, PyYAML for virtbuilder
+  packages:
+    - virt-manager
+    - virt-manager-common
+    - virt-install
+    - spice-gtk
+    - qemu-spice
+    - typelib-1_0-SpiceClientGtk-3_0
+    - typelib-1_0-SpiceClientGlib-2_0
+    - python313-PyYAML
+  # additional packages per inventory, e.g. cockpit-machines
+  extra_packages: []
+  # install recommended packages too (like zypper's default --recommends)
+  recommends: true
+
+  # modular libvirt daemons are socket activated (Leap presets enable these already; ensured here)
+  sockets:
+    - virtqemud.socket
+    - virtnetworkd.socket
+    - virtstoraged.socket
+    - virtnodedevd.socket
+    - virtsecretd.socket
+    - virtlogd.socket
+    - virtlockd.socket
+
+  # libvirt networks, see README.md; networks not listed are left untouched
+  networks: []

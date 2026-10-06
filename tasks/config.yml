@@ -1,0 +1,58 @@
+---
+# final configuration + validation (no changes on the host)
+- name: Build final virt configuration
+  ansible.builtin.set_fact:
+    virt_final: "{{ virt_defaults | combine(virt | default({}), recursive=True) }}"
+    virt_networks: []
+
+- name: Build network list with defaults
+  ansible.builtin.set_fact:
+    virt_networks: "{{ virt_networks + [virt_network_defaults | combine(item)] }}"
+  loop: "{{ virt_final.networks }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+  vars:
+    virt_network_defaults:
+      state: present
+      forward: nat
+      domain: ""
+      dhcp_range: []
+      hosts: []
+      dns_hosts: []
+      autostart: true
+
+- name: Assert network names and bridges are unique
+  ansible.builtin.assert:
+    that:
+      - virt_names | unique | length == virt_names | length
+      - virt_bridges | unique | length == virt_bridges | length
+    fail_msg: "virt: network names and bridges must be unique (names: {{ virt_names }}, bridges: {{ virt_bridges }})"
+    quiet: true
+  vars:
+    virt_names: "{{ virt_networks | map(attribute='name') | list }}"
+    virt_bridges: "{{ virt_networks | selectattr('state', '==', 'present') | map(attribute='bridge') | list }}"
+
+- name: Assert network settings
+  ansible.builtin.assert:
+    that:
+      - item.state in ['present', 'absent']
+      - item.state == 'absent' or item.bridge | default('') | length > 0
+      - item.state == 'absent' or item.forward in ['nat', 'none', 'open', 'route']
+      - item.state == 'absent' or item.address | default('') is ansible.utils.ipv4_address
+      - item.state == 'absent' or (item.prefix | default(0) | int) in range(8, 31)
+      # static leases and DHCP range inside the subnet, MACs/IPs/names unique
+      - item.state == 'absent' or (virt_ips | reject('ansible.utils.in_network', virt_subnet) | list | length == 0)
+      - item.hosts | map(attribute='mac') | map('lower') | unique | length == item.hosts | length
+      - item.hosts | map(attribute='ip') | unique | length == item.hosts | length
+      - item.hosts | map(attribute='name') | unique | length == item.hosts | length
+      - item.dhcp_range | length in [0, 2]
+    fail_msg: >-
+      virt: network {{ item.name }}: needs bridge, forward (nat|none|open|route), address (IPv4), prefix (8-30);
+      hosts[].ip and dhcp_range inside {{ virt_subnet }}; hosts[] mac/ip/name unique
+    quiet: true
+  loop: "{{ virt_networks }}"
+  loop_control:
+    label: "{{ item.name }}"
+  vars:
+    virt_subnet: "{{ (item.address | default('0.0.0.0') ~ '/' ~ item.prefix | default(32)) | ansible.utils.ipaddr('network/prefix') }}"
+    virt_ips: "{{ item.hosts | map(attribute='ip') | list + item.dhcp_range }}"

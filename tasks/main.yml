@@ -1,0 +1,50 @@
+---
+- name: Build and validate configuration
+  ansible.builtin.include_tasks: config.yml
+
+- name: KVM host
+  when: virt_final.install
+  block:
+    - name: Only openSUSE is supported
+      ansible.builtin.assert:
+        that: ansible_os_family == 'Suse'
+        fail_msg: "virt: only openSUSE is implemented, not {{ ansible_distribution }}"
+        quiet: true
+
+    - name: Install virtualization patterns
+      community.general.zypper:
+        name: "{{ virt_final.patterns }}"
+        type: pattern
+        state: present
+        disable_recommends: "{{ not virt_final.recommends }}"
+      when: virt_final.patterns | length > 0
+
+    - name: Install virtualization packages
+      community.general.zypper:
+        name: "{{ virt_final.packages + virt_final.extra_packages }}"
+        state: present
+        disable_recommends: "{{ not virt_final.recommends }}"
+
+    - name: Enable and start libvirt sockets
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: "{{ virt_final.sockets }}"
+      # in check mode the units may not be installed yet
+      when: not ansible_check_mode
+
+    - name: Create directory for rendered network definitions
+      ansible.builtin.file:
+        path: "{{ virt_network_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Configure libvirt networks
+      ansible.builtin.include_tasks: network.yml
+      loop: "{{ virt_networks }}"
+      loop_control:
+        loop_var: virt_net
+        label: "{{ virt_net.name }}"

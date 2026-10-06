@@ -1,0 +1,113 @@
+---
+# one libvirt network (virt_net); desired state is the rendered XML in virt_network_dir
+- name: "Network {{ virt_net.name }}: read UUID"
+  ansible.builtin.command:
+    argv: "{{ virt_virsh + ['net-uuid', virt_net.name] }}"
+  register: virt_net_uuid
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Network {{ virt_net.name }}: read state"
+  ansible.builtin.command:
+    argv: "{{ virt_virsh + ['net-info', virt_net.name] }}"
+  register: virt_net_info
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: virt_net_uuid.rc == 0
+
+- name: "Network {{ virt_net.name }}: set facts"
+  ansible.builtin.set_fact:
+    virt_net_exists: "{{ virt_net_uuid.rc == 0 }}"
+    virt_net_active: "{{ virt_net_uuid.rc == 0 and virt_net_info.stdout is search('(?m)^Active:\\s+yes') }}"
+    virt_net_autostart: "{{ virt_net_uuid.rc == 0 and virt_net_info.stdout is search('(?m)^Autostart:\\s+yes') }}"
+    # keep the existing UUID: libvirt refuses to redefine a network name with another UUID
+    virt_net_uuid_final: >-
+      {{ virt_net_uuid.stdout | trim if virt_net_uuid.rc == 0
+         else (inventory_hostname ~ '-libvirt-network-' ~ virt_net.name) | to_uuid }}
+
+- name: "Network {{ virt_net.name }}: present"
+  when: virt_net.state == 'present'
+  block:
+    - name: "Network {{ virt_net.name }}: render definition"
+      ansible.builtin.template:
+        src: network.xml.j2
+        dest: "{{ virt_network_dir }}/{{ virt_net.name }}.xml"
+        owner: root
+        group: root
+        mode: "0600"
+      register: virt_net_xml
+
+    - name: "Network {{ virt_net.name }}: define"
+      ansible.builtin.command:
+        argv: "{{ virt_virsh + ['net-define', virt_network_dir ~ '/' ~ virt_net.name ~ '.xml'] }}"
+      changed_when: true
+      when: virt_net_xml is changed or not virt_net_exists
+
+    # guests attached to the network lose connectivity on a restart → only restart an unused network
+    - name: "Network {{ virt_net.name }}: find running guests using it"
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          for d in $(virsh --connect qemu:///system list --name); do
+            virsh --connect qemu:///system domiflist "$d" | awk -v n="$VIRT_NET" -v d="$d" '$2 == "network" && $3 == n {print d}'
+          done | sort -u
+        executable: /bin/bash
+      environment:
+        VIRT_NET: "{{ virt_net.name }}"
+      register: virt_net_users
+      changed_when: false
+      when: virt_net_xml is changed and virt_net_active
+
+    - name: "Network {{ virt_net.name }}: restart to apply the new definition"
+      ansible.builtin.command:
+        argv: "{{ virt_virsh + [item, virt_net.name] }}"
+      loop: [net-destroy, net-start]
+      changed_when: true
+      when:
+        - virt_net_xml is changed and virt_net_active
+        - virt_net_users.stdout | default('') | length == 0
+
+    - name: "Network {{ virt_net.name }}: notice"
+      ansible.builtin.debug:
+        msg: >-
+          network {{ virt_net.name }} was redefined but not restarted, running guests use it
+          ({{ virt_net_users.stdout_lines | join(', ') }}). Apply it later:
+          virsh net-destroy {{ virt_net.name }} && virsh net-start {{ virt_net.name }}
+          (guests on it then need a reboot or interface re-attach)
+      when:
+        - virt_net_xml is changed and virt_net_active
+        - virt_net_users.stdout | default('') | length > 0
+
+    - name: "Network {{ virt_net.name }}: start"
+      ansible.builtin.command:
+        argv: "{{ virt_virsh + ['net-start', virt_net.name] }}"
+      changed_when: true
+      when: not virt_net_active
+
+    - name: "Network {{ virt_net.name }}: autostart"
+      ansible.builtin.command:
+        argv: "{{ virt_virsh + ['net-autostart', virt_net.name] + ([] if virt_net.autostart else ['--disable']) }}"
+      changed_when: true
+      when: virt_net.autostart != virt_net_autostart
+
+- name: "Network {{ virt_net.name }}: absent"
+  when: virt_net.state == 'absent'
+  block:
+    - name: "Network {{ virt_net.name }}: stop"
+      ansible.builtin.command:
+        argv: "{{ virt_virsh + ['net-destroy', virt_net.name] }}"
+      changed_when: true
+      when: virt_net_active
+
+    - name: "Network {{ virt_net.name }}: undefine"
+      ansible.builtin.command:
+        argv: "{{ virt_virsh + ['net-undefine', virt_net.name] }}"
+      changed_when: true
+      when: virt_net_exists
+
+    - name: "Network {{ virt_net.name }}: remove rendered definition"
+      ansible.builtin.file:
+        path: "{{ virt_network_dir }}/{{ virt_net.name }}.xml"
+        state: absent
